@@ -1,0 +1,43 @@
+[project]
+name = "aitm"
+version = "0.1.0"
+description = "Agent-S + Bytebot integration workspace"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Agent-S core deps
+    "numpy",
+    "backoff",
+    "pandas",
+    "openai",
+    "anthropic",
+    "fastapi",
+    "uvicorn",
+    "paddleocr",
+    "paddlepaddle",
+    "together",
+    "scikit-learn",
+    "websockets",
+    "tiktoken",
+    "selenium",
+    "pyautogui",
+    "toml",
+    "pytesseract",
+    "google-genai",
+    # Agent-S dev/lint
+    "black",
+    # OSWorld eval deps
+    "tqdm",
+    "python-dotenv",
+    "wrapt-timeout-decorator",
+    # Image processing
+    "Pillow",
+    # Clipboard
+    "pyperclip",
+    # Requests (for bytebot client if needed)
+    "requests",
+    "gui-agents>=0.3.2",
+]
+
+[tool.uv.sources]
+gui-agents = { path = "Agent-S", editable = true }
