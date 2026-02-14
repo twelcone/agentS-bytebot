@@ -101,6 +101,8 @@ class LMMEngineAnthropic(LMMEngine):
             self.llm_client = Anthropic(api_key=api_key)
         # Use the instance temperature if not specified in the call
         temp = self.temperature if temperature is None else temperature
+        if temp is None:
+            temp = 0.0
         if self.thinking:
             full_response = self.llm_client.messages.create(
                 system=messages[0]["content"][0]["text"],
