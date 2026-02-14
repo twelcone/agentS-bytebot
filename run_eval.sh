@@ -38,8 +38,8 @@ GROUND_MODEL="ByteDance-Seed/UI-TARS-1.5-7B"
 GROUND_W=1920
 GROUND_H=1080
 
-# OSWorld paths (relative to this script)
-EVAL_EXAMPLES_DIR="${SCRIPT_DIR}/bytebot-azure/osworld-bench/OSWorld/evaluation_examples"
+# OSWorld paths
+EVAL_EXAMPLES_DIR="${SCRIPT_DIR}/../bytebot-azure/osworld-bench/OSWorld/evaluation_examples"
 TEST_ALL_JSON="${SCRIPT_DIR}/Agent-S/evaluation_sets/test_all.json"
 TEST_SMALL_JSON="${SCRIPT_DIR}/Agent-S/evaluation_sets/test_small_new.json"
 RESULT_DIR="${SCRIPT_DIR}/results"
