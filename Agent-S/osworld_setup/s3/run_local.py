@@ -9,6 +9,17 @@ import logging
 import os
 import sys
 
+# Add OSWorld to PYTHONPATH so `from desktop_env.desktop_env import DesktopEnv` works
+# without needing to copy files into the OSWorld directory.
+# Set OSWORLD_DIR env var, or it defaults to the sibling OSWorld checkout.
+_osworld_dir = os.environ.get(
+    "OSWORLD_DIR",
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "OSWorld"),
+)
+_osworld_dir = os.path.abspath(_osworld_dir)
+if os.path.isdir(_osworld_dir) and _osworld_dir not in sys.path:
+    sys.path.insert(0, _osworld_dir)
+
 from tqdm import tqdm
 
 import lib_run_single
@@ -181,6 +192,34 @@ def config() -> argparse.Namespace:
         type=int,
         default=0,
         help="Maximum number of examples to run (0 = all). Examples are taken in order across domains.",
+    )
+    parser.add_argument(
+        "--task_id",
+        type=str,
+        default=None,
+        help="Run a single specific task by UUID (e.g. bb5e4c0d-f964-439c-97b6-bdb9747de3f4). Overrides --domain and --max_examples.",
+    )
+    parser.add_argument(
+        "--task_ids",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Run specific tasks by UUID (space-separated). Overrides --domain and --max_examples.",
+    )
+    parser.add_argument(
+        "--small",
+        action="store_true",
+        help="Use the small test set (test_small_new.json, 65 examples) instead of test_all.json.",
+    )
+    parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Print the list of tasks that would be run, then exit without running.",
+    )
+    parser.add_argument(
+        "--rerun",
+        action="store_true",
+        help="Ignore previous results and re-run all matching tasks (skip get_unfinished filter).",
     )
 
     # logging related
@@ -398,12 +437,114 @@ def get_result(action_space, use_model, observation_type, result_dir, total_file
         return all_result
 
 
+def find_task_in_meta(test_all_meta, task_id):
+    """Find which domain a task_id belongs to. Returns domain or None."""
+    for domain, ids in test_all_meta.items():
+        if task_id in ids:
+            return domain
+    return None
+
+
+def build_task_list(args, test_all_meta):
+    """Build the filtered task list based on args. Returns dict {domain: [task_ids]}."""
+    # --task_id: single specific task
+    if args.task_id:
+        domain = find_task_in_meta(test_all_meta, args.task_id)
+        if domain is None:
+            # Task not in meta file — try to find config file directly
+            for d in test_all_meta:
+                config_file = os.path.join(
+                    args.test_config_base_dir, f"examples/{d}/{args.task_id}.json"
+                )
+                if os.path.exists(config_file):
+                    domain = d
+                    break
+            if domain is None:
+                logger.error(f"Task {args.task_id} not found in any domain")
+                sys.exit(1)
+        return {domain: [args.task_id]}
+
+    # --task_ids: multiple specific tasks
+    if args.task_ids:
+        result = {}
+        for tid in args.task_ids:
+            domain = find_task_in_meta(test_all_meta, tid)
+            if domain is None:
+                for d in test_all_meta:
+                    config_file = os.path.join(
+                        args.test_config_base_dir, f"examples/{d}/{tid}.json"
+                    )
+                    if os.path.exists(config_file):
+                        domain = d
+                        break
+            if domain is None:
+                logger.warning(f"Task {tid} not found in any domain, skipping")
+                continue
+            result.setdefault(domain, []).append(tid)
+        if not result:
+            logger.error("No valid task IDs found")
+            sys.exit(1)
+        return result
+
+    # Standard filtering: domain → unfinished → max_examples
+    task_list = dict(test_all_meta)
+
+    if args.domain != "all":
+        if args.domain not in task_list:
+            logger.error(f"Domain '{args.domain}' not found. Available: {list(task_list.keys())}")
+            sys.exit(1)
+        task_list = {args.domain: task_list[args.domain]}
+
+    if not args.rerun:
+        task_list = get_unfinished(
+            args.action_space,
+            args.model,
+            args.observation_type,
+            args.result_dir,
+            task_list,
+        )
+
+    if args.max_examples > 0:
+        limited = {}
+        count = 0
+        for domain in task_list:
+            limited[domain] = []
+            for example_id in task_list[domain]:
+                if count >= args.max_examples:
+                    break
+                limited[domain].append(example_id)
+                count += 1
+            if count >= args.max_examples:
+                break
+        task_list = {d: ids for d, ids in limited.items() if ids}
+
+    return task_list
+
+
 if __name__ == "__main__":
-    ####### The complete version of the list of examples #######
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     args = config()
 
-    # save args to json in result_dir/action_space/observation_type/model/args.json
+    # --small overrides test_all_meta_path
+    if args.small:
+        small_path = os.path.join(
+            os.path.dirname(args.test_all_meta_path), "test_small_new.json"
+        )
+        if os.path.exists(small_path):
+            args.test_all_meta_path = small_path
+        else:
+            # Try relative to evaluation_sets
+            alt = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "evaluation_sets", "test_small_new.json",
+            )
+            if os.path.exists(alt):
+                args.test_all_meta_path = alt
+            else:
+                logger.error(f"Small test set not found at {small_path} or {alt}")
+                sys.exit(1)
+
+    # save args
     path_to_args = os.path.join(
         args.result_dir,
         args.action_space,
@@ -418,35 +559,29 @@ if __name__ == "__main__":
     with open(args.test_all_meta_path, "r", encoding="utf-8") as f:
         test_all_meta = json.load(f)
 
-    if args.domain != "all":
-        test_all_meta = {args.domain: test_all_meta[args.domain]}
+    test_file_list = build_task_list(args, test_all_meta)
 
-    test_file_list = get_unfinished(
-        args.action_space,
-        args.model,
-        args.observation_type,
-        args.result_dir,
-        test_all_meta,
-    )
-    # Limit total examples if --max_examples is set
-    if args.max_examples > 0:
-        limited = {}
-        count = 0
-        for domain in test_file_list:
-            limited[domain] = []
-            for example_id in test_file_list[domain]:
-                if count >= args.max_examples:
-                    break
-                limited[domain].append(example_id)
-                count += 1
-            if count >= args.max_examples:
-                break
-        test_file_list = {d: ids for d, ids in limited.items() if ids}
-
+    # Print summary
+    total = sum(len(ids) for ids in test_file_list.values())
     left_info = ""
     for domain in test_file_list:
-        left_info += f"{domain}: {len(test_file_list[domain])}\n"
-    logger.info(f"Left tasks:\n{left_info}")
+        left_info += f"  {domain}: {len(test_file_list[domain])}\n"
+    logger.info(f"Tasks to run ({total} total):\n{left_info}")
+
+    if args.dry_run:
+        print(f"\n=== DRY RUN: {total} tasks would be run ===\n")
+        for domain, ids in test_file_list.items():
+            for tid in ids:
+                config_file = os.path.join(
+                    args.test_config_base_dir, f"examples/{domain}/{tid}.json"
+                )
+                instruction = ""
+                if os.path.exists(config_file):
+                    with open(config_file, "r", encoding="utf-8") as f:
+                        instruction = json.load(f).get("instruction", "")[:80]
+                print(f"  [{domain}] {tid}  {instruction}")
+        print()
+        sys.exit(0)
 
     get_result(
         args.action_space,
