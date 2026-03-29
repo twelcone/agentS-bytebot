@@ -18,7 +18,7 @@ _osworld_dir = os.environ.get(
 )
 _osworld_dir = os.path.abspath(_osworld_dir)
 if os.path.isdir(_osworld_dir) and _osworld_dir not in sys.path:
-    sys.path.insert(0, _osworld_dir)
+    sys.path.append(_osworld_dir)
 
 from tqdm import tqdm
 
