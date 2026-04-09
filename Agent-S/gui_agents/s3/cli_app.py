@@ -320,7 +320,18 @@ def main():
         type=str,
         help="The task instruction for Agent-S3 to perform.",
     )
-
+    parser.add_argument(
+        "--attack_strategy",
+        type=str,
+        default="click",
+        help="Which attack is poisoned ?",
+    )
+    parser.add_argument(
+        "--attacker_endpoint",
+        type=str,
+        default="http://localhost:8008",
+        help="The endpoint of the attacker server.",
+    )
     args = parser.parse_args()
 
     # Re-scales screenshot size to ensure it fits in UI-TARS context limit
@@ -363,6 +374,7 @@ def main():
         engine_params_for_grounding=engine_params_for_grounding,
         width=screen_width,
         height=screen_height,
+        attack_strategy=args.attack_strategy,
     )
 
     agent = AgentS3(
